@@ -1,0 +1,91 @@
+SELECT
+Company,
+Item,
+InvPrice,
+TodayPrice,
+StockPCS,
+InvQuantity,
+InvNo,
+InvDate
+
+FROM
+
+(
+   SELECT
+   ADR.adr_Nazwa AS Company,
+   TOW.tw_Symbol as Item,
+   ROUND((POZ.ob_CenaWaluta) *(1 -ISNULL(POZ.ob_Rabat/100,0)),2) as InvPrice,
+ 
+   --- cena klienta w jego walucie i z jego rabatem 
+   CASE
+   WHEN KON.KH_cena =1 THEN ROUND((CEN.tc_CenaNetto1) *(1 -ISNULL(RAB.rt_Procent/100,0)),2)  --- EUR,
+   WHEN KON.KH_cena =2 THEN ROUND((CEN.tc_CenaNetto2) *(1 -ISNULL(RAB.rt_Procent/100,0)),2)  ---USD	
+   WHEN KON.Kh_cena =3 THEN ROUND((CEN.tc_CenaNetto3) *(1 -ISNULL(RAB.rt_Procent/100,0)),2)   ---PLN
+   ELSE 0 END as TodayPrice,
+
+   CAST(SUM(STAN.st_stan) as INT) as StockPCS,
+
+   CAST(POZ.ob_ilosc as INT) as InvQuantity,
+   DOK.dok_NrPelny as InvNo,
+   DOK.dok_DataWyst as InvDate,
+
+   --- zeby pokazywało rekord z najnowszą datą zrobiłem row_number gdzie rekord z najnowszą datą z danym klientem i indeksem artykułu dostaje 1 i później pokazywane są rekordy z RowNum=1
+   ROW_NUMBER() OVER(PARTITION BY ADR.adr_Nazwa, TOW.tw_symbol ORDER BY TOW.tw_Symbol,DOK.dok_DataWyst DESC)  as RowNum
+
+   --- wyłączam walutę dokumentu i walutę klienta po której jest liczona obecna cena - zmiany walut na klientach praktycznie się nie zdarzają
+   ---DOK.dok_Waluta as InvCurrency,
+
+   ---CASE
+   ---WHEN KON.Kh_cena =1 THEN 'EUR'
+   ---WHEN KON.Kh_cena =2 THEN 'USD'
+   ---WHEN KON.Kh_cena =3 THEN 'PLN'
+   ---ELSE 'NULL' END as CompanyCurrency
+
+   FROM 
+   dok__dokument DOK
+
+   JOIN
+   dok_Pozycja POZ ON POZ.ob_DokHanId = DOK.dok_Id AND DOK.dok_typ=2   --- faktury
+
+   LEFT JOIN
+   adr__Ewid ADR ON ADR.adr_IdObiektu = DOK.dok_PlatnikId AND ADR.adr_TypAdresu = 1
+
+   JOIN
+   kh__Kontrahent KON ON KON.kh_Id = ADR.adr_IdObiektu
+
+   JOIN 
+   tw__Towar TOW ON TOW.tw_Id = POZ.ob_TowId
+
+   JOIN 
+   tw_Cena CEN ON CEN.tc_idTowar=TOW.tw_id
+
+   ---dodaję tabele z rabatami klienta
+   LEFT JOIN sl_Rabat  RAB ON RAB.rt_id = KON.kh_IdRabat 
+
+   LEFT JOIN tw_CechaTw CECH ON TOW.tw_ID=cht_IdTowar
+
+   LEFT JOIN tw_Stan STAN on TOW.tw_id = STAN.St_TowId
+
+   WHERE 
+   (ADR.adr_Nazwa LIKE '{T:Nazwa firmy}%')
+   AND
+   ---DOK.dok_DataWyst  >(GETDATE()-732)
+   (DOK.dok_DataWyst BETWEEN {D:Zakres dat: GET DATE()} AND {D: do})
+   --- tylko towary z cechą 'jest w katalogu'
+   AND
+   cht_idCecha =2
+
+
+   GROUP BY
+   ADR.adr_Nazwa, TOW.tw_Symbol, POZ.ob_ilosc, POZ.ob_CenaWaluta, DOK.dok_NrPelny, DOK.dok_DataWyst, DOK.dok_Waluta, KON.Kh_cena, CEN.tc_CenaNetto1, CEN.tc_CenaNetto2, CEN.tc_CenaNetto3, RAB.rt_Procent, POZ.ob_Rabat
+
+   ---ORDER BY
+   ---ADR.adr_Nazwa,
+   ---TOW.tw_Symbol,
+   ---DOK.dok_DataWyst
+
+) as Tabela1
+
+WHERE
+
+RowNum=1
